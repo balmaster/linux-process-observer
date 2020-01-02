@@ -8,6 +8,9 @@ import org.quartz.JobExecutionContext;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -20,29 +23,51 @@ public class CheckProcessJob implements Job {
     }
 
     public void execute(JobExecutionContext context) {
-        JobDataMap dataMap = context.getMergedJobDataMap();
-        List<String> processNames = (List<String>) dataMap.get(PROCESS_NAME);
-        List<String> excludeProcessNames = (List<String>) dataMap.get(EXCLUDE_PROCESS_NAME);
-        Integer maxTime = dataMap.getInt(MAX_TIME);
-        List<String> ids = this.getProcessIds(processNames, excludeProcessNames);
-        ids.remove(dataMap.getString(CURRENT_PROCESS_ID));
-        if (ids != null && ids.size() > 0) {
-            PersistentFileCounter persistentCounter = (PersistentFileCounter) dataMap.get(PERSISTENT_COUNTER);
 
-            try {
+        tryReset(context);
+        try {
+
+            JobDataMap dataMap = context.getMergedJobDataMap();
+            List<String> processNames = (List<String>) dataMap.get(PROCESS_NAME);
+            List<String> excludeProcessNames = (List<String>) dataMap.get(EXCLUDE_PROCESS_NAME);
+            Integer maxTime = dataMap.getInt(MAX_TIME);
+            List<String> ids = this.getProcessIds(processNames, excludeProcessNames);
+            ids.remove(dataMap.getString(CURRENT_PROCESS_ID));
+            if (ids != null && ids.size() > 0) {
+                PersistentFileCounter persistentCounter = (PersistentFileCounter) dataMap.get(PERSISTENT_COUNTER);
+
                 persistentCounter.inc(dataMap.getIntValue(CHECK_INTERVAL));
                 processRunning.set((double) persistentCounter.get());
                 System.out.println(persistentCounter.get());
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
 
-            this.checkNotifyTime(maxTime, persistentCounter);
-            if (persistentCounter.get() > (long) maxTime) {
-                this.killProcess(ids);
+                this.checkNotifyTime(maxTime, persistentCounter);
+                if (persistentCounter.get() > (long) maxTime) {
+                    this.killProcess(ids);
+                }
             }
+        } catch (Exception e) {
+            e.printStackTrace();
         }
 
+    }
+
+    private void tryReset(JobExecutionContext context) {
+        JobDataMap dataMap = context.getMergedJobDataMap();
+        PersistentFileCounter persistentCounter = (PersistentFileCounter) dataMap.get(PERSISTENT_COUNTER);
+        try {
+            Instant resetDate = Instant.ofEpochMilli(persistentCounter.getResetDate());
+            Instant nowDate = TimeUtils.getNetTime();
+            long duration = Duration.between(resetDate, nowDate).get(ChronoUnit.SECONDS);
+            System.out.println(String.format("try reset: resetDate: %s, nowDate: %s, duration: %d", resetDate, nowDate, duration));
+            //System.out.println("now date: " + nowDate);
+            if (duration >= 24 * 60 * 60) {
+                System.out.println("reset");
+                persistentCounter.reset();
+            }
+            System.out.println(persistentCounter.get());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     private void checkNotifyTime(Integer maxTime, PersistentFileCounter persistentCounter) {
@@ -74,6 +99,7 @@ public class CheckProcessJob implements Job {
     }
 
     private List<String> getProcessIds(List<String> processNames, List<String> excludeProcessNames) {
+        //System.out.println(String.format("getProcessIds includes: %s, excludews: %s", processNames, excludeProcessNames));
         try {
             Process p = new ProcessBuilder("ps", "-ef").start();
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(p.getInputStream()))) {

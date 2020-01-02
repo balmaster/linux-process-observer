@@ -36,9 +36,10 @@ public class Main {
             if (cmd.hasOption(PROCESS_NAME)) {
                 String processName = cmd.getOptionValue(PROCESS_NAME);
                 String excludeProcessName = cmd.hasOption(EXCLUDE_PROCESS_NAME) ? cmd.getOptionValue(EXCLUDE_PROCESS_NAME) : "linux-process-observer";
-                int checkInterval = cmd.hasOption(CHECK_INTERVAL) ? Integer.parseInt(cmd.getOptionValue(CHECK_INTERVAL)) : 5;
+                int checkInterval = cmd.hasOption(CHECK_INTERVAL) ? Integer.parseInt(cmd.getOptionValue(CHECK_INTERVAL)) : 60;
                 int maxTime = cmd.hasOption(MAX_TIME) ? Integer.parseInt(cmd.getOptionValue(MAX_TIME)) : 3600;
-                PersistentFileCounter persistentCounter = new PersistentFileCounter(new File("/tmp/process-running"));
+                File userHome = new File(System.getProperty("user.home"));
+                PersistentFileCounter persistentCounter = new PersistentFileCounter(new File(userHome, ".process-running"));
                 Scheduler scheduler = StdSchedulerFactory.getDefaultScheduler();
 
                 try {
@@ -50,7 +51,6 @@ public class Main {
                     jobDataMap.put(MAX_TIME, maxTime);
                     jobDataMap.put(CURRENT_PROCESS_ID, getProcessId(""));
                     scheduleCheck(scheduler, jobDataMap, checkInterval);
-                    scheduleReset(scheduler, jobDataMap);
                     CountDownLatch latch = new CountDownLatch(1);
                     scheduler.start();
                     latch.await();
@@ -63,19 +63,6 @@ public class Main {
             e.printStackTrace();
         }
 
-    }
-
-    private static void scheduleReset(Scheduler scheduler, JobDataMap jobDataMap) throws SchedulerException {
-        JobDetail job = JobBuilder.newJob(ResetJob.class)
-                .withIdentity("reset")
-                .usingJobData(jobDataMap)
-                .build();
-        CronTrigger trigger = TriggerBuilder.newTrigger()
-                .withIdentity("reset")
-                .startNow()
-                .withSchedule(CronScheduleBuilder.cronSchedule("0 0 7 * * ?"))
-                .build();
-        scheduler.scheduleJob(job, trigger);
     }
 
     private static void scheduleCheck(Scheduler scheduler, JobDataMap jobDataMap, int checkInterval) throws SchedulerException {

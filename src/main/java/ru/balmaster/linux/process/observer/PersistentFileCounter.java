@@ -10,51 +10,65 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public class PersistentFileCounter implements Closeable {
     private final FileChannel channel;
-    private final AtomicLong counter;
+    private final AtomicLong counter = new AtomicLong();
     private final File file;
+    private long resetDate;
 
     public PersistentFileCounter(File file) throws IOException {
         this.file = file;
         this.channel = (new RandomAccessFile(file, "rw")).getChannel();
-        this.counter = new AtomicLong(this.read());
+        read();
+        write();
     }
 
-    private long read() throws IOException {
-        if (this.channel.size() >= 8L) {
-            ByteBuffer buffer = ByteBuffer.allocate(8);
-            this.channel.read(buffer);
+    private void read() throws IOException {
+        if (channel.size() >= 8L) {
+            ByteBuffer buffer = ByteBuffer.allocate(16);
+            channel.read(buffer);
             buffer.flip();
-            return buffer.getLong();
+            counter.set(buffer.getLong());
+            if (channel.size() >= 16) {
+                resetDate = buffer.getLong();
+            } else {
+                resetDate = TimeUtils.getNetTime().toEpochMilli();
+            }
         } else {
-            return 0L;
+            resetDate = TimeUtils.getNetTime().toEpochMilli();
+            counter.set(0);
         }
     }
 
     private void write() throws IOException {
-        ByteBuffer buffer = ByteBuffer.allocate(8);
-        buffer.putLong(this.counter.get());
+        ByteBuffer buffer = ByteBuffer.allocate(16);
+        buffer.putLong(counter.get());
+        buffer.putLong(resetDate);
         buffer.flip();
-        this.channel.position(0L);
+        channel.position(0L);
 
         while(buffer.hasRemaining()) {
-            this.channel.write(buffer);
+            channel.write(buffer);
         }
 
-        this.channel.force(true);
+        channel.force(true);
     }
 
     public void reset() throws IOException {
-        this.counter.set(0L);
-        this.write();
+        counter.set(0L);
+        resetDate = TimeUtils.getNetTime().toEpochMilli();
+        write();
     }
 
     public void inc(long value) throws IOException {
         this.counter.addAndGet(value);
-        this.write();
+        write();
     }
 
     public long get() {
         return this.counter.get();
+    }
+
+    public long getResetDate() {
+        return resetDate;
     }
 
     public void close() throws IOException {
